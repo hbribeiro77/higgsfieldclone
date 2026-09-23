@@ -347,18 +347,18 @@ export function ReferenceVideoComposer({ ref, busy, credentialsConfigured, draft
       </label>
 
       <div className="flex flex-wrap gap-2">
-        <label className="flex items-center gap-1 rounded-full bg-[#1c1c1c] px-3 py-1.5 text-xs text-zinc-200">
-          <input
-            aria-label="Duração em segundos"
-            type="number"
-            min={limits.duration.min}
-            max={limits.duration.max}
-            value={duration}
-            onChange={(event) => setDuration(clamp(Number(event.target.value), limits.duration.min, limits.duration.max))}
-            className="w-8 bg-transparent text-center outline-none"
-          />
-          s
-        </label>
+        <select
+          aria-label="Duração em segundos"
+          value={duration}
+          onChange={(event) => setDuration(clamp(Number(event.target.value), limits.duration.min, limits.duration.max))}
+          className="rounded-full bg-[#1c1c1c] px-3 py-1.5 text-xs"
+        >
+          {Array.from({ length: limits.duration.max - limits.duration.min + 1 }, (_, index) => limits.duration.min + index).map((seconds) => (
+            <option key={seconds} value={seconds}>
+              {seconds} s
+            </option>
+          ))}
+        </select>
         <select
           aria-label="Proporção"
           value={aspectRatio}
