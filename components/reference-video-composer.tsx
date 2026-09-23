@@ -47,6 +47,7 @@ export type ComposerSubmission = {
 
 export type ComposerHandle = {
   addGeneratedVideo: (url: string, previewUrl: string) => void;
+  addRemoteReference: (kind: "image" | "video", url: string, previewUrl: string) => void;
 };
 
 type ReferenceVideoComposerProps = {
@@ -159,25 +160,30 @@ export function ReferenceVideoComposer({ ref, busy, credentialsConfigured, draft
 
   useImperativeHandle(ref, () => ({
     addGeneratedVideo(url: string, previewUrl: string) {
-      const videoLimit = MODEL_LIMITS[model].maxVideos;
-      const videoCount = referencesRef.current.filter((reference) => reference.kind === "video").length;
-      if (videoCount >= videoLimit) {
-        setNotice(`${MODEL_LIMITS[model].label} aceita no máximo ${videoLimit} vídeos.`);
-        return;
-      }
-      setReferences((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          file: null,
-          remoteUrl: url,
-          kind: "video",
-          previewUrl,
-        },
-      ]);
-      setNotice("Vídeo gerado adicionado como referência. Nada foi enviado.");
+      pushRemoteReference("video", url, previewUrl, "Vídeo gerado adicionado como referência. Nada foi enviado.");
+    },
+    addRemoteReference(kind: "image" | "video", url: string, previewUrl: string) {
+      const notice = kind === "image"
+        ? "Imagem da galeria adicionada como referência. Nada foi gerado."
+        : "Clipe adicionado como referência. Nada foi gerado.";
+      pushRemoteReference(kind, url, previewUrl, notice);
     },
   }), [model]);
+
+  function pushRemoteReference(kind: "image" | "video", url: string, previewUrl: string, notice: string) {
+    const limit = kind === "video" ? MODEL_LIMITS[model].maxVideos : MODEL_LIMITS[model].maxImages;
+    const count = referencesRef.current.filter((reference) => reference.kind === kind).length;
+    if (count >= limit) {
+      const noun = kind === "video" ? "vídeos" : "imagens";
+      setNotice(`${MODEL_LIMITS[model].label} aceita no máximo ${limit} ${noun}.`);
+      return;
+    }
+    setReferences((current) => [
+      ...current,
+      { id: crypto.randomUUID(), file: null, remoteUrl: url, kind, previewUrl },
+    ]);
+    setNotice(notice);
+  }
 
   useEffect(() => {
     return () => {

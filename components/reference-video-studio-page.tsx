@@ -9,6 +9,14 @@ import {
 } from "@/components/reference-video-composer";
 import type { PublicGeneration } from "@/lib/generation-ownership-file-store";
 
+type GalleryItemCard = {
+  id: string;
+  kind: "image" | "video";
+  label: string;
+  mediaUrl: string;
+  createdAt: string;
+};
+
 const STATUS_LABEL: Record<PublicGeneration["status"], string> = {
   submitting: "Enviando",
   submit_unknown: "Envio sem confirmação",
@@ -30,8 +38,14 @@ export function ReferenceVideoStudioPage() {
   const [historyLayout, setHistoryLayout] = useState<"list" | "grid">("list");
   const [suggestion, setSuggestion] = useState<ComposerSuggestion | null>(null);
   const [preparingReferenceId, setPreparingReferenceId] = useState<string | null>(null);
+  const [gallery, setGallery] = useState<GalleryItemCard[]>([]);
+  const [galleryTab, setGalleryTab] = useState<"videos" | "images">("videos");
+  const [clipStart, setClipStart] = useState<number | null>(null);
+  const [clipEnd, setClipEnd] = useState<number | null>(null);
+  const [savingGallery, setSavingGallery] = useState(false);
   const suggestionToken = useRef(0);
   const composerRef = useRef<ComposerHandle>(null);
+  const playerRef = useRef<HTMLVideoElement>(null);
 
   const selected = generations.find((generation) => generation.id === selectedId) ?? null;
 
@@ -58,6 +72,7 @@ export function ReferenceVideoStudioPage() {
       setLoaded(true);
     }
     void load();
+    void refreshGallery();
     return () => {
       cancelled = true;
     };
@@ -75,6 +90,73 @@ export function ReferenceVideoStudioPage() {
     }, 2000);
     return () => window.clearInterval(timer);
   }, [replaceGeneration, selected?.id, selected?.polling]);
+
+  async function refreshGallery() {
+    const response = await fetch("/api/galeria");
+    if (!response.ok) return;
+    const payload = (await response.json()) as { items?: GalleryItemCard[] };
+    setGallery(payload.items ?? []);
+  }
+
+  async function saveFrame() {
+    if (!selected?.mediaUrl || savingGallery) return;
+    setSavingGallery(true);
+    setFormError(null);
+    try {
+      const response = await fetch("/api/galeria/frame", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ generationId: selected.id, timeSeconds: playerRef.current?.currentTime ?? 0 }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Não foi possível salvar o frame.");
+      await refreshGallery();
+      setGalleryTab("images");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Não foi possível salvar o frame.");
+    } finally {
+      setSavingGallery(false);
+    }
+  }
+
+  async function saveClip() {
+    if (!selected?.mediaUrl || clipStart === null || clipEnd === null || savingGallery) return;
+    setSavingGallery(true);
+    setFormError(null);
+    try {
+      const response = await fetch("/api/galeria/clipe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ generationId: selected.id, startSeconds: clipStart, endSeconds: clipEnd }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Não foi possível salvar o clipe.");
+      await refreshGallery();
+      setGalleryTab("videos");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Não foi possível salvar o clipe.");
+    } finally {
+      setSavingGallery(false);
+    }
+  }
+
+  async function useGalleryItem(item: GalleryItemCard) {
+    if (preparingReferenceId) return;
+    setPreparingReferenceId(item.id);
+    setFormError(null);
+    try {
+      const response = await fetch(`/api/galeria/${item.id}/referencia`, { method: "POST" });
+      const payload = (await response.json()) as { error?: string; publicUrl?: string; kind?: "image" | "video"; previewUrl?: string };
+      if (!response.ok || !payload.publicUrl || (payload.kind !== "image" && payload.kind !== "video")) {
+        throw new Error(payload.error ?? "Não foi possível usar esse item como referência.");
+      }
+      composerRef.current?.addRemoteReference(payload.kind, payload.publicUrl, payload.previewUrl ?? item.mediaUrl);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Não foi possível usar esse item como referência.");
+    } finally {
+      setPreparingReferenceId(null);
+    }
+  }
 
   async function handleGenerate(submission: ComposerSubmission) {
     setBusy(true);
@@ -234,22 +316,59 @@ export function ReferenceVideoStudioPage() {
             {selected && playbackUrl ? (
               <div className="flex w-full max-w-4xl flex-col items-center gap-3">
                 <video
+                  ref={playerRef}
                   key={playbackUrl}
                   src={playbackUrl}
                   controls
                   className="max-h-[72vh] w-full rounded-2xl bg-black object-contain"
                 />
                 {selected.status === "completed" && selected.mediaUrl ? (
-                  <button
-                    type="button"
-                    className="rounded-full bg-white/10 px-4 py-2 text-sm"
-                    disabled={preparingReferenceId === selected.id}
-                    onClick={() => {
-                      void addGeneratedVideoAsReference(selected);
-                    }}
-                  >
-                    {preparingReferenceId === selected.id ? "Preparando referência…" : "Usar como referência"}
-                  </button>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-full bg-white/10 px-4 py-2 text-sm"
+                      disabled={preparingReferenceId === selected.id}
+                      onClick={() => {
+                        void addGeneratedVideoAsReference(selected);
+                      }}
+                    >
+                      {preparingReferenceId === selected.id ? "Preparando referência…" : "Usar como referência"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full bg-white/10 px-4 py-2 text-sm"
+                      disabled={savingGallery}
+                      onClick={() => {
+                        void saveFrame();
+                      }}
+                    >
+                      Salvar frame
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full bg-white/10 px-4 py-2 text-sm"
+                      onClick={() => setClipStart(playerRef.current?.currentTime ?? 0)}
+                    >
+                      Início {clipStart === null ? "" : `${clipStart.toFixed(1)}s`}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full bg-white/10 px-4 py-2 text-sm"
+                      onClick={() => setClipEnd(playerRef.current?.currentTime ?? 0)}
+                    >
+                      Fim {clipEnd === null ? "" : `${clipEnd.toFixed(1)}s`}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full bg-[#d6ff3f] px-4 py-2 text-sm font-semibold text-black disabled:opacity-40"
+                      disabled={savingGallery || clipStart === null || clipEnd === null}
+                      onClick={() => {
+                        void saveClip();
+                      }}
+                    >
+                      Salvar clipe
+                    </button>
+                  </div>
                 ) : null}
               </div>
             ) : (
@@ -275,10 +394,49 @@ export function ReferenceVideoStudioPage() {
         </main>
 
         <aside className={`min-h-0 overflow-y-auto border-t border-white/10 p-3 lg:border-t-0 lg:border-l ${historyLayout === "grid" ? "lg:col-span-1" : ""}`}>
-          {generations.length === 0 && loaded ? (
+          <div className="mb-3 grid grid-cols-2 rounded-xl bg-[#141414] p-1 text-sm">
+            <button
+              type="button"
+              className={`rounded-lg px-3 py-2 ${galleryTab === "videos" ? "bg-[#2a2a2a] text-white" : "text-zinc-500"}`}
+              onClick={() => setGalleryTab("videos")}
+            >
+              Vídeos
+            </button>
+            <button
+              type="button"
+              className={`rounded-lg px-3 py-2 ${galleryTab === "images" ? "bg-[#2a2a2a] text-white" : "text-zinc-500"}`}
+              onClick={() => setGalleryTab("images")}
+            >
+              Imagens
+            </button>
+          </div>
+          {galleryTab === "images" ? (
+            <GalleryCards
+              items={gallery.filter((item) => item.kind === "image")}
+              empty="Nenhum frame salvo. Pause o vídeo e clique em Salvar frame."
+              preparingReferenceId={preparingReferenceId}
+              onUse={(item) => {
+                void useGalleryItem(item);
+              }}
+            />
+          ) : null}
+          {galleryTab === "videos" && gallery.some((item) => item.kind === "video") ? (
+            <div className="mb-4">
+              <p className="mb-2 px-1 text-xs text-zinc-500">Clipes salvos</p>
+              <GalleryCards
+                items={gallery.filter((item) => item.kind === "video")}
+                empty=""
+                preparingReferenceId={preparingReferenceId}
+                onUse={(item) => {
+                  void useGalleryItem(item);
+                }}
+              />
+            </div>
+          ) : null}
+          {galleryTab === "videos" && generations.length === 0 && loaded ? (
             <p className="px-1 text-sm text-zinc-500">Nenhuma geração nesta sessão.</p>
           ) : null}
-          <div className={historyLayout === "grid" ? "grid grid-cols-2 gap-2" : "flex flex-col gap-3"}>
+          <div className={galleryTab === "images" ? "hidden" : historyLayout === "grid" ? "grid grid-cols-2 gap-2" : "flex flex-col gap-3"}>
             {generations.map((generation) => {
               const preview = generation.mediaUrl ?? generation.remoteVideoUrl;
               const aspect = generation.aspectRatio === "adaptive" ? "Auto" : generation.aspectRatio;
@@ -335,6 +493,45 @@ export function ReferenceVideoStudioPage() {
           </div>
         </aside>
       </div>
+    </div>
+  );
+}
+
+function GalleryCards({
+  items,
+  empty,
+  preparingReferenceId,
+  onUse,
+}: {
+  items: GalleryItemCard[];
+  empty: string;
+  preparingReferenceId: string | null;
+  onUse: (item: GalleryItemCard) => void;
+}) {
+  if (items.length === 0) {
+    return empty ? <p className="px-1 text-sm text-zinc-500">{empty}</p> : null;
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {items.map((item) => (
+        <div key={item.id} className="rounded-2xl bg-[#141414] p-3">
+          {item.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={item.mediaUrl} alt="" className="aspect-video w-full rounded-xl object-cover" />
+          ) : (
+            <video src={item.mediaUrl} muted className="aspect-video w-full rounded-xl object-cover" />
+          )}
+          <p className="mt-2 text-sm text-zinc-100">{item.label}</p>
+          <button
+            type="button"
+            className="mt-3 w-full rounded-lg bg-[#d6ff3f]/15 py-1.5 text-xs text-[#d6ff3f]"
+            disabled={preparingReferenceId === item.id}
+            onClick={() => onUse(item)}
+          >
+            {preparingReferenceId === item.id ? "Preparando referência…" : "Usar como referência"}
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
