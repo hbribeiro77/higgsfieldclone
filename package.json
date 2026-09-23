@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test lib/reference-video-request-validation.test.ts"
+    "test": "node --experimental-strip-types --test lib/reference-video-request-validation.test.ts lib/verificacao-da-senha-de-acesso-do-estudio.test.ts"
   },
   "dependencies": {
     "next": "16.3.6",
