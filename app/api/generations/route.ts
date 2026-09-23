@@ -1,4 +1,3 @@
-import { getOrCreateOwnerId } from "@/lib/anonymous-session-owner";
 import {
   claimGenerationSubmission,
   isGenerationId,
@@ -19,9 +18,10 @@ export const dynamic = "force-dynamic";
 
 const ACCEPTED_STATUSES = new Set<GenerationStatus>(["queued", "in_progress", "completed", "failed", "nsfw", "canceled"]);
 
+const STUDIO_OWNER_ID = "estudio";
+
 export async function GET() {
-  const ownerId = await getOrCreateOwnerId();
-  const generations = await listGenerationsForOwner(ownerId);
+  const generations = await listGenerationsForOwner();
   return Response.json({
     credentialsConfigured: higgsfieldCredentialsConfigured(),
     generations: generations.map(toPublicGeneration),
@@ -29,7 +29,6 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const ownerId = await getOrCreateOwnerId();
   const payload = await readJson(request);
   if (!payload) {
     return Response.json({ error: "Envie um JSON válido." }, { status: 422 });
@@ -53,7 +52,7 @@ export async function POST(request: Request) {
   }
 
   const claimed = await claimGenerationSubmission({
-    ownerId,
+    ownerId: STUDIO_OWNER_ID,
     clientSubmissionId,
     model: validated.value.model,
     prompt: typeof validated.value.body.prompt === "string" ? validated.value.body.prompt : "",
@@ -80,7 +79,7 @@ export async function POST(request: Request) {
     const status = ACCEPTED_STATUSES.has(submitted.status as GenerationStatus)
       ? (submitted.status as GenerationStatus)
       : "queued";
-    const updated = await updateGeneration(claimed.record.id, ownerId, {
+    const updated = await updateGeneration(claimed.record.id, STUDIO_OWNER_ID, {
       requestId: submitted.requestId,
       statusUrl: submitted.statusUrl,
       cancelUrl: submitted.cancelUrl,
@@ -93,7 +92,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const higgsfieldError = error instanceof HiggsfieldRequestError ? error : null;
     const unconfirmed = !higgsfieldError || higgsfieldError.status === 0;
-    const updated = await updateGeneration(claimed.record.id, ownerId, {
+    const updated = await updateGeneration(claimed.record.id, STUDIO_OWNER_ID, {
       status: unconfirmed ? "submit_unknown" : "failed",
       error: higgsfieldError?.message ?? "Falha ao enviar a geração. O envio não foi repetido.",
       correlationId: higgsfieldError?.correlationId ?? null,

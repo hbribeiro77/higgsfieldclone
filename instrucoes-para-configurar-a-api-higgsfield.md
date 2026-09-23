@@ -27,4 +27,4 @@ Preencha as três variáveis em `.env.local` e suba:
 docker compose up -d --build
 ```
 
-O estúdio fica em `http://IP-DA-VPS:3000`. Histórico e vídeos ficam na pasta `data/` ao lado do projeto.
+O estúdio fica em `http://IP-DA-VPS:3000`. Histórico e vídeos ficam na pasta `data/` ao lado do projeto, um só para quem entrar com a senha. `docker compose up -d --build` não apaga essa pasta. `docker compose down -v` apaga.

@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { getOrCreateOwnerId } from "@/lib/anonymous-session-owner";
 import { findGenerationForOwner } from "@/lib/generation-ownership-file-store";
 import {
   createHiggsfieldUploadTarget,
@@ -18,8 +17,7 @@ type RouteContext = {
 
 export async function POST(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  const ownerId = await getOrCreateOwnerId();
-  const record = await findGenerationForOwner(ownerId, id);
+  const record = await findGenerationForOwner("estudio", id);
   if (!record || record.status !== "completed") {
     return Response.json({ error: "Esse vídeo ainda não está pronto para virar referência." }, { status: 404 });
   }

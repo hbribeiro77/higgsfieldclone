@@ -118,20 +118,18 @@ function isStillPolling(record: GenerationRecord): boolean {
   return record.status === "completed" && !record.localMediaReady && Boolean(record.remoteVideoUrl);
 }
 
-export async function listGenerationsForOwner(ownerId: string): Promise<GenerationRecord[]> {
+export async function listGenerationsForOwner(_ownerId?: string): Promise<GenerationRecord[]> {
   return enqueue(async () => {
     const data = await readStoreUnlocked();
-    return data.generations
-      .filter((generation) => generation.ownerId === ownerId)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return data.generations.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   });
 }
 
-export async function findGenerationForOwner(ownerId: string, generationId: string): Promise<GenerationRecord | null> {
+export async function findGenerationForOwner(_ownerId: string, generationId: string): Promise<GenerationRecord | null> {
   if (!isGenerationId(generationId)) return null;
   return enqueue(async () => {
     const data = await readStoreUnlocked();
-    return data.generations.find((generation) => generation.id === generationId && generation.ownerId === ownerId) ?? null;
+    return data.generations.find((generation) => generation.id === generationId) ?? null;
   });
 }
 
@@ -140,9 +138,7 @@ export async function claimGenerationSubmission(
 ): Promise<{ record: GenerationRecord; created: boolean }> {
   return enqueue(async () => {
     const data = await readStoreUnlocked();
-    const existing = data.generations.find(
-      (generation) => generation.ownerId === input.ownerId && generation.clientSubmissionId === input.clientSubmissionId,
-    );
+    const existing = data.generations.find((generation) => generation.clientSubmissionId === input.clientSubmissionId);
     if (existing) return { record: existing, created: false };
 
     const now = new Date();
@@ -162,12 +158,12 @@ export async function claimGenerationSubmission(
 
 export async function updateGeneration(
   generationId: string,
-  ownerId: string,
+  _ownerId: string,
   patch: Partial<Omit<GenerationRecord, "id" | "ownerId" | "createdAt">>,
 ): Promise<GenerationRecord | null> {
   return enqueue(async () => {
     const data = await readStoreUnlocked();
-    const index = data.generations.findIndex((generation) => generation.id === generationId && generation.ownerId === ownerId);
+    const index = data.generations.findIndex((generation) => generation.id === generationId);
     if (index === -1) return null;
     const current = data.generations[index];
     const updated: GenerationRecord = {

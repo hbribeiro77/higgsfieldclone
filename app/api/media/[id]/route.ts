@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { getOrCreateOwnerId } from "@/lib/anonymous-session-owner";
 import { findGenerationForOwner } from "@/lib/generation-ownership-file-store";
 import { localMediaPath } from "@/lib/refresh-owned-generation-status";
 
@@ -12,8 +11,7 @@ type RouteContext = {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  const ownerId = await getOrCreateOwnerId();
-  const record = await findGenerationForOwner(ownerId, id);
+  const record = await findGenerationForOwner("estudio", id);
   if (!record?.localMediaReady) {
     return Response.json({ error: "Vídeo não encontrado." }, { status: 404 });
   }

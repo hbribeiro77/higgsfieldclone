@@ -1,4 +1,3 @@
-import { getOrCreateOwnerId } from "@/lib/anonymous-session-owner";
 import { findGenerationForOwner, toPublicGeneration } from "@/lib/generation-ownership-file-store";
 import { refreshOwnedGenerationStatus } from "@/lib/refresh-owned-generation-status";
 
@@ -11,8 +10,7 @@ type RouteContext = {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  const ownerId = await getOrCreateOwnerId();
-  const record = await findGenerationForOwner(ownerId, id);
+  const record = await findGenerationForOwner("estudio", id);
   if (!record) {
     return Response.json({ error: "Geração não encontrada." }, { status: 404 });
   }
