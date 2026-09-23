@@ -1,26 +1,22 @@
 import { saveClipFromVideo, toPublicGalleryItem } from "@/lib/arquivo-da-galeria-de-frames-e-clipes";
-import { findGenerationForOwner } from "@/lib/generation-ownership-file-store";
-import { localMediaPath } from "@/lib/refresh-owned-generation-status";
+import { resolveRecorteSource } from "@/lib/origem-do-recorte-de-frame-e-clipe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   const payload = await readJson(request);
-  const generationId = payload?.generationId;
   const startSeconds = payload?.startSeconds;
   const endSeconds = payload?.endSeconds;
-  if (typeof generationId !== "string" || typeof startSeconds !== "number" || typeof endSeconds !== "number") {
+  if (!payload || typeof startSeconds !== "number" || typeof endSeconds !== "number") {
     return Response.json({ error: "Informe o vídeo, o início e o fim do clipe." }, { status: 422 });
   }
-  const record = await findGenerationForOwner("estudio", generationId);
-  if (!record || record.status !== "completed" || !record.localMediaReady) {
-    return Response.json({ error: "Esse vídeo ainda não está salvo na VPS." }, { status: 404 });
-  }
+  const source = await resolveRecorteSource(payload);
+  if (!source.ok) return Response.json({ error: source.error }, { status: source.status });
   try {
     const item = await saveClipFromVideo({
-      sourcePath: localMediaPath(record.id),
-      sourceGenerationId: record.id,
+      sourcePath: source.sourcePath,
+      sourceGenerationId: source.sourceGenerationId,
       startSeconds,
       endSeconds,
     });
@@ -34,11 +30,17 @@ export async function POST(request: Request) {
 
 async function readJson(request: Request): Promise<{
   generationId?: unknown;
+  galleryItemId?: unknown;
   startSeconds?: unknown;
   endSeconds?: unknown;
 } | null> {
   try {
-    return (await request.json()) as { generationId?: unknown; startSeconds?: unknown; endSeconds?: unknown };
+    return (await request.json()) as {
+      generationId?: unknown;
+      galleryItemId?: unknown;
+      startSeconds?: unknown;
+      endSeconds?: unknown;
+    };
   } catch {
     return null;
   }

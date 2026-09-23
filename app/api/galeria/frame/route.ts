@@ -1,25 +1,21 @@
 import { saveFrameFromVideo, toPublicGalleryItem } from "@/lib/arquivo-da-galeria-de-frames-e-clipes";
-import { findGenerationForOwner } from "@/lib/generation-ownership-file-store";
-import { localMediaPath } from "@/lib/refresh-owned-generation-status";
+import { resolveRecorteSource } from "@/lib/origem-do-recorte-de-frame-e-clipe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   const payload = await readJson(request);
-  const generationId = payload?.generationId;
   const timeSeconds = payload?.timeSeconds;
-  if (typeof generationId !== "string" || typeof timeSeconds !== "number") {
+  if (!payload || typeof timeSeconds !== "number") {
     return Response.json({ error: "Informe o vídeo e o instante do frame." }, { status: 422 });
   }
-  const record = await findGenerationForOwner("estudio", generationId);
-  if (!record || record.status !== "completed" || !record.localMediaReady) {
-    return Response.json({ error: "Esse vídeo ainda não está salvo na VPS." }, { status: 404 });
-  }
+  const source = await resolveRecorteSource(payload);
+  if (!source.ok) return Response.json({ error: source.error }, { status: source.status });
   try {
     const item = await saveFrameFromVideo({
-      sourcePath: localMediaPath(record.id),
-      sourceGenerationId: record.id,
+      sourcePath: source.sourcePath,
+      sourceGenerationId: source.sourceGenerationId,
       timeSeconds,
     });
     return Response.json({ item: toPublicGalleryItem(item) }, { status: 201 });
@@ -30,9 +26,13 @@ export async function POST(request: Request) {
   }
 }
 
-async function readJson(request: Request): Promise<{ generationId?: unknown; timeSeconds?: unknown } | null> {
+async function readJson(request: Request): Promise<{
+  generationId?: unknown;
+  galleryItemId?: unknown;
+  timeSeconds?: unknown;
+} | null> {
   try {
-    return (await request.json()) as { generationId?: unknown; timeSeconds?: unknown };
+    return (await request.json()) as { generationId?: unknown; galleryItemId?: unknown; timeSeconds?: unknown };
   } catch {
     return null;
   }

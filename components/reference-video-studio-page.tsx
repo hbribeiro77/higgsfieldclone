@@ -98,15 +98,28 @@ export function ReferenceVideoStudioPage() {
     setGallery(payload.items ?? []);
   }
 
+  function sourceOfRecorte(): { generationId: string } | { galleryItemId: string } | null {
+    const clip = gallery.find((item) => item.id === viewedGalleryId && item.kind === "video");
+    if (clip) return { galleryItemId: clip.id };
+    if (selected?.mediaUrl) return { generationId: selected.id };
+    return null;
+  }
+
+  function clearClipMarks() {
+    setClipStart(null);
+    setClipEnd(null);
+  }
+
   async function saveFrame() {
-    if (!selected?.mediaUrl || savingGallery) return;
+    const source = sourceOfRecorte();
+    if (!source || savingGallery) return;
     setSavingGallery(true);
     setFormError(null);
     try {
       const response = await fetch("/api/galeria/frame", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ generationId: selected.id, timeSeconds: playerRef.current?.currentTime ?? 0 }),
+        body: JSON.stringify({ ...source, timeSeconds: playerRef.current?.currentTime ?? 0 }),
       });
       const payload = (await response.json()) as { error?: string; item?: GalleryItemCard };
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível salvar o frame.");
@@ -121,19 +134,21 @@ export function ReferenceVideoStudioPage() {
   }
 
   async function saveClip() {
-    if (!selected?.mediaUrl || clipStart === null || clipEnd === null || savingGallery) return;
+    const source = sourceOfRecorte();
+    if (!source || clipStart === null || clipEnd === null || savingGallery) return;
     setSavingGallery(true);
     setFormError(null);
     try {
       const response = await fetch("/api/galeria/clipe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ generationId: selected.id, startSeconds: clipStart, endSeconds: clipEnd }),
+        body: JSON.stringify({ ...source, startSeconds: clipStart, endSeconds: clipEnd }),
       });
       const payload = (await response.json()) as { error?: string; item?: GalleryItemCard };
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível salvar o clipe.");
       await refreshGallery();
       if (payload.item) setViewedGalleryId(payload.item.id);
+      clearClipMarks();
       setGalleryTab("clips");
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Não foi possível salvar o clipe.");
@@ -296,8 +311,14 @@ export function ReferenceVideoStudioPage() {
   }
 
   function openGeneration(id: string) {
+    clearClipMarks();
     setViewedGalleryId(null);
     setSelectedId(id);
+  }
+
+  function openGalleryItem(id: string) {
+    clearClipMarks();
+    setViewedGalleryId(id);
   }
 
   return (
@@ -387,6 +408,19 @@ export function ReferenceVideoStudioPage() {
                     >
                       {preparingReferenceId === viewedGallery.id ? "Preparando referência…" : "Usar como referência"}
                     </button>
+                    <RecorteButtons
+                      saving={savingGallery}
+                      clipStart={clipStart}
+                      clipEnd={clipEnd}
+                      onSaveFrame={() => {
+                        void saveFrame();
+                      }}
+                      onMarkStart={() => setClipStart(playerRef.current?.currentTime ?? 0)}
+                      onMarkEnd={() => setClipEnd(playerRef.current?.currentTime ?? 0)}
+                      onSaveClip={() => {
+                        void saveClip();
+                      }}
+                    />
                     <button
                       type="button"
                       className="rounded-full bg-red-500/15 px-4 py-2 text-sm text-red-200"
@@ -409,40 +443,19 @@ export function ReferenceVideoStudioPage() {
                     >
                       {preparingReferenceId === selected.id ? "Preparando referência…" : "Usar como referência"}
                     </button>
-                    <button
-                      type="button"
-                      className="rounded-full bg-white/10 px-4 py-2 text-sm"
-                      disabled={savingGallery}
-                      onClick={() => {
+                    <RecorteButtons
+                      saving={savingGallery}
+                      clipStart={clipStart}
+                      clipEnd={clipEnd}
+                      onSaveFrame={() => {
                         void saveFrame();
                       }}
-                    >
-                      Salvar frame
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full bg-white/10 px-4 py-2 text-sm"
-                      onClick={() => setClipStart(playerRef.current?.currentTime ?? 0)}
-                    >
-                      Início {clipStart === null ? "" : `${clipStart.toFixed(1)}s`}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full bg-white/10 px-4 py-2 text-sm"
-                      onClick={() => setClipEnd(playerRef.current?.currentTime ?? 0)}
-                    >
-                      Fim {clipEnd === null ? "" : `${clipEnd.toFixed(1)}s`}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full bg-[#d6ff3f] px-4 py-2 text-sm font-semibold text-black disabled:opacity-40"
-                      disabled={savingGallery || clipStart === null || clipEnd === null}
-                      onClick={() => {
+                      onMarkStart={() => setClipStart(playerRef.current?.currentTime ?? 0)}
+                      onMarkEnd={() => setClipEnd(playerRef.current?.currentTime ?? 0)}
+                      onSaveClip={() => {
                         void saveClip();
                       }}
-                    >
-                      Salvar clipe
-                    </button>
+                    />
                     <button
                       type="button"
                       className="rounded-full bg-red-500/15 px-4 py-2 text-sm text-red-200"
@@ -567,7 +580,7 @@ export function ReferenceVideoStudioPage() {
                   : "Nenhum frame. No vídeo gerado, clique em Salvar frame."
               }
               selectedId={viewedGalleryId}
-              onOpen={(item) => setViewedGalleryId(item.id)}
+              onOpen={(item) => openGalleryItem(item.id)}
               onDelete={(item) => {
                 void removeGalleryItem(item);
               }}
@@ -576,6 +589,46 @@ export function ReferenceVideoStudioPage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+function RecorteButtons({
+  saving,
+  clipStart,
+  clipEnd,
+  onSaveFrame,
+  onMarkStart,
+  onMarkEnd,
+  onSaveClip,
+}: {
+  saving: boolean;
+  clipStart: number | null;
+  clipEnd: number | null;
+  onSaveFrame: () => void;
+  onMarkStart: () => void;
+  onMarkEnd: () => void;
+  onSaveClip: () => void;
+}) {
+  return (
+    <>
+      <button type="button" className="rounded-full bg-white/10 px-4 py-2 text-sm" disabled={saving} onClick={onSaveFrame}>
+        Salvar frame
+      </button>
+      <button type="button" className="rounded-full bg-white/10 px-4 py-2 text-sm" onClick={onMarkStart}>
+        Início {clipStart === null ? "" : `${clipStart.toFixed(1)}s`}
+      </button>
+      <button type="button" className="rounded-full bg-white/10 px-4 py-2 text-sm" onClick={onMarkEnd}>
+        Fim {clipEnd === null ? "" : `${clipEnd.toFixed(1)}s`}
+      </button>
+      <button
+        type="button"
+        className="rounded-full bg-[#d6ff3f] px-4 py-2 text-sm font-semibold text-black disabled:opacity-40"
+        disabled={saving || clipStart === null || clipEnd === null}
+        onClick={onSaveClip}
+      >
+        Salvar clipe
+      </button>
+    </>
   );
 }
 
