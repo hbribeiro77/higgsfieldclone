@@ -82,6 +82,8 @@ export function ReferenceVideoComposer({ ref, busy, credentialsConfigured, draft
   const [fileUrl, setFileUrl] = useState(initialLimits.supportsDocumentOrLink ? draft?.fileUrl ?? "" : "");
   const [linkUrl, setLinkUrl] = useState(initialLimits.supportsDocumentOrLink ? draft?.linkUrl ?? "" : "");
   const [references, setReferences] = useState<ComposerReference[]>(() => remoteReferencesFromDraft(draft));
+  const [estimateLabel, setEstimateLabel] = useState<string | null>(null);
+  const [estimateNote, setEstimateNote] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(
     draft ? "Campos preenchidos com a geração anterior. Revise e clique em Gerar quando quiser." : null,
   );
@@ -94,6 +96,66 @@ export function ReferenceVideoComposer({ ref, busy, credentialsConfigured, draft
   useEffect(() => {
     referencesRef.current = references;
   });
+
+  useEffect(() => {
+    if (!credentialsConfigured) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const imageUrls = references.flatMap((reference) => (reference.kind === "image" && reference.remoteUrl ? [reference.remoteUrl] : []));
+      const videoUrls = references.flatMap((reference) => (reference.kind === "video" && reference.remoteUrl ? [reference.remoteUrl] : []));
+      const audioUrls = references.flatMap((reference) => (reference.kind === "audio" && reference.remoteUrl ? [reference.remoteUrl] : []));
+      void fetch("/api/generations/estimativa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model,
+          prompt,
+          duration,
+          resolution,
+          aspectRatio,
+          generateAudio,
+          enableThinking: model === WAN_MODEL_ID ? enableThinking : undefined,
+          imageUrls,
+          videoUrls,
+          audioUrls,
+          fileUrl: fileUrl || undefined,
+          linkUrl: linkUrl || undefined,
+        }),
+      })
+        .then(async (response) => {
+          const payload = (await response.json()) as { label?: string | null; error?: string; note?: string };
+          if (!response.ok || !payload.label) {
+            setEstimateLabel(null);
+            setEstimateNote(payload.error ?? "Não foi possível calcular o custo.");
+            return;
+          }
+          setEstimateLabel(payload.label);
+          setEstimateNote(payload.note ?? null);
+        })
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setEstimateLabel(null);
+          setEstimateNote("Não foi possível calcular o custo.");
+        });
+    }, 400);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [
+    aspectRatio,
+    credentialsConfigured,
+    duration,
+    enableThinking,
+    fileUrl,
+    generateAudio,
+    linkUrl,
+    model,
+    prompt,
+    references,
+    resolution,
+  ]);
 
   useImperativeHandle(ref, () => ({
     addGeneratedVideo(url: string, previewUrl: string) {
@@ -342,13 +404,14 @@ export function ReferenceVideoComposer({ ref, busy, credentialsConfigured, draft
 
       <div className="mt-auto space-y-2 pt-2">
         {notice ? <p className="text-xs text-amber-300">{notice}</p> : null}
+        {estimateNote ? <p className="text-xs text-zinc-500">{estimateNote}</p> : null}
         {missingVisual ? <p className="text-xs text-zinc-500">O Seedance pede uma imagem ou um vídeo.</p> : null}
         <button
           type="submit"
           disabled={blocked}
           className="flex w-full items-center justify-center rounded-xl bg-[#d6ff3f] py-3 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {busy ? "Enviando…" : "Gerar"}
+          {busy ? "Enviando…" : estimateLabel ? `Gerar · ${estimateLabel}` : "Gerar"}
         </button>
       </div>
     </form>

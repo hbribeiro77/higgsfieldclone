@@ -165,7 +165,34 @@ function isSafeRequestId(value: string): boolean {
   return /^[0-9a-f-]{8,80}$/i.test(value);
 }
 
-export function validateReferenceVideoRequest(input: ReferenceVideoRequestInput): ReferenceVideoValidationResult {
+export function readHiggsfieldCostEstimate(body: unknown): { credits: string; usd: string } | null {
+  const record = asResponseRecord(body);
+  const nested = asResponseRecord(record?.data) ?? asResponseRecord(record?.result);
+  const source = readNumericLike(record, "usd") || readNumericLike(record, "credits") ? record : nested ?? record;
+  if (!source) return null;
+  const usd = readNumericLike(source, "usd");
+  const credits = readNumericLike(source, "credits");
+  if (!usd && !credits) return null;
+  return { usd: usd ?? "", credits: credits ?? "" };
+}
+
+export function formatUsdEstimateLabel(usd: string): string | null {
+  const value = Number(usd);
+  if (!usd.trim() || !Number.isFinite(value)) return null;
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "USD" }).replace(/\u00a0/g, " ");
+}
+
+function readNumericLike(record: Record<string, unknown> | null, key: string): string | null {
+  const value = record?.[key];
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return value.trim();
+  return null;
+}
+
+export function validateReferenceVideoRequest(
+  input: ReferenceVideoRequestInput,
+  options?: { forEstimate?: boolean },
+): ReferenceVideoValidationResult {
   const errors: string[] = [];
   const model = input.model;
   if (model !== WAN_MODEL_ID && model !== SEEDANCE_MODEL_ID) {
@@ -175,7 +202,7 @@ export function validateReferenceVideoRequest(input: ReferenceVideoRequestInput)
   const limits = MODEL_LIMITS[model];
   const prompt = readOptionalString(input.prompt);
   if (model === WAN_MODEL_ID) {
-    if (!prompt) errors.push("O Wan 3.0 exige um prompt.");
+    if (!prompt && !options?.forEstimate) errors.push("O Wan 3.0 exige um prompt.");
   } else if (input.prompt !== undefined && input.prompt !== null && input.prompt !== "" && !prompt) {
     errors.push("O prompt não pode ficar em branco.");
   } else if (typeof input.prompt === "string" && input.prompt.trim().length === 0 && input.prompt.length > 0) {
@@ -191,7 +218,7 @@ export function validateReferenceVideoRequest(input: ReferenceVideoRequestInput)
   const videoUrls = readUrlList(input.videoUrls, "Vídeos", limits.maxVideos, errors);
   const audioUrls = readUrlList(input.audioUrls, "Áudios", limits.maxAudios, errors);
 
-  if (limits.requiresVisualReference && imageUrls.length === 0 && videoUrls.length === 0) {
+  if (limits.requiresVisualReference && !options?.forEstimate && imageUrls.length === 0 && videoUrls.length === 0) {
     errors.push("O Seedance 2.0 exige pelo menos uma imagem ou um vídeo. Áudio sozinho não basta.");
   }
 

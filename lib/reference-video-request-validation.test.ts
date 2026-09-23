@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  formatUsdEstimateLabel,
   isAllowedStatusUrl,
   readAcceptedHiggsfieldSubmission,
+  readHiggsfieldCostEstimate,
   resolveUploadContentType,
   validateReferenceVideoRequest,
 } from "./reference-video-request-validation.ts";
@@ -209,6 +211,37 @@ test("a resposta aceita o status em platform.higgsfield.ai", () => {
     video: { url: "https://cdn.example.com/video.mp4" },
   });
   assert.equal(fromIdOnly?.statusUrl, `https://api.higgsfield.ai/requests/${requestId}/status`);
+});
+
+test("a estimativa lê créditos e dólares e formata em real brasileiro de dólar", () => {
+  assert.deepEqual(readHiggsfieldCostEstimate({ credits: "1.500", usd: "0.094" }), {
+    credits: "1.500",
+    usd: "0.094",
+  });
+  assert.deepEqual(readHiggsfieldCostEstimate({ data: { credits: 8, usd: 0.4 } }), {
+    credits: "8",
+    usd: "0.4",
+  });
+  assert.equal(readHiggsfieldCostEstimate({ status: "queued" }), null);
+  assert.equal(formatUsdEstimateLabel("0.4"), "US$ 0,40");
+  assert.equal(formatUsdEstimateLabel("0.094"), "US$ 0,09");
+  assert.equal(formatUsdEstimateLabel(""), null);
+});
+
+test("a estimativa aceita Wan sem prompt e Seedance sem referência", () => {
+  const wan = validateReferenceVideoRequest({ model: "wan-3.0", duration: 2, resolution: "480p" }, { forEstimate: true });
+  assert.equal(wan.ok, true);
+  if (wan.ok) {
+    assert.equal(wan.value.body.duration, 2);
+    assert.equal(wan.value.body.resolution, "480p");
+    assert.equal(wan.value.body.prompt, undefined);
+  }
+
+  const seedance = validateReferenceVideoRequest({ model: "seedance-2.0" }, { forEstimate: true });
+  assert.equal(seedance.ok, true);
+
+  const generation = validateReferenceVideoRequest({ model: "wan-3.0" });
+  assert.equal(generation.ok, false);
 });
 
 test("o upload aceita os tipos documentados e recusa mp3", () => {

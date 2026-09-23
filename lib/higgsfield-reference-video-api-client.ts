@@ -2,6 +2,7 @@ import {
   isAllowedStatusUrl,
   isPublicHttpsUrl,
   readAcceptedHiggsfieldSubmission,
+  readHiggsfieldCostEstimate,
 } from "@/lib/reference-video-request-validation";
 
 const HIGGSFIELD_API_ORIGIN = "https://api.higgsfield.ai";
@@ -132,6 +133,30 @@ export async function submitReferenceVideo(
     cancelUrl: accepted.cancelUrl,
     correlationId: response.correlationId,
   };
+}
+
+export async function estimateReferenceVideo(
+  endpointPath: string,
+  body: Record<string, unknown>,
+): Promise<{ credits: string; usd: string } | { pricingDescription: string }> {
+  if (!endpointPath.startsWith("/")) {
+    throw new HiggsfieldRequestError("Endpoint de geração inválido.", 0, null);
+  }
+  const response = await higgsfieldFetch(`/estimate${endpointPath}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const estimate = readHiggsfieldCostEstimate(response.body);
+  if (estimate?.usd) return estimate;
+  const description = readPricingDescription(response.body);
+  if (description) return { pricingDescription: description };
+  throw new HiggsfieldRequestError("A Higgsfield não devolveu o custo desta geração.", response.httpStatus, response.correlationId);
+}
+
+function readPricingDescription(body: unknown): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const value = (body as Record<string, unknown>).pricing_description;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export async function fetchReferenceVideoStatus(statusUrl: string): Promise<HiggsfieldStatusResponse> {
