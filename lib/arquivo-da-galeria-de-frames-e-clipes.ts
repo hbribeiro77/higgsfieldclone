@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { validateClipRange, validateFrameTime } from "@/lib/validacao-de-recorte-de-frame-e-clipe";
 
@@ -44,6 +44,22 @@ export function isGalleryId(value: string): boolean {
 export async function listGalleryItems(): Promise<GalleryItem[]> {
   const data = await readGallery();
   return data.items.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+export async function deleteGalleryItem(id: string): Promise<boolean> {
+  if (!isGalleryId(id)) return false;
+  const removed = await enqueue(async () => {
+    const data = await readGallery();
+    const item = data.items.find((entry) => entry.id === id) ?? null;
+    if (!item) return null;
+    data.items = data.items.filter((entry) => entry.id !== id);
+    await mkdir(galleryRoot(), { recursive: true });
+    await writeFile(path.join(galleryRoot(), "indice-da-galeria.json"), JSON.stringify(data, null, 2), "utf8");
+    return item;
+  });
+  if (!removed) return false;
+  await rm(galleryItemPath(removed), { force: true });
+  return true;
 }
 
 export async function findGalleryItem(id: string): Promise<GalleryItem | null> {

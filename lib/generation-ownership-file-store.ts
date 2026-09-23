@@ -156,6 +156,18 @@ export async function claimGenerationSubmission(
   });
 }
 
+export async function deleteGeneration(generationId: string): Promise<GenerationRecord | null> {
+  if (!isGenerationId(generationId)) return null;
+  return enqueue(async () => {
+    const data = await readStoreUnlocked();
+    const index = data.generations.findIndex((generation) => generation.id === generationId);
+    if (index === -1) return null;
+    const [removed] = data.generations.splice(index, 1);
+    await persistStore(data);
+    return removed;
+  });
+}
+
 export async function updateGeneration(
   generationId: string,
   _ownerId: string,
