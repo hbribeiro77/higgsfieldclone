@@ -42,6 +42,13 @@ export function textBoxHeight(lineCount: number): number {
   return Math.max(1, lineCount) * GALLERY_TEXT_LINE_HEIGHT;
 }
 
+export function fitGalleryTextTop(y: number, lineCount: number, imageHeight: number): number {
+  const available = Math.max(1, imageHeight);
+  const overflow = y + textBoxHeight(lineCount) - available;
+  if (overflow <= 0) return y;
+  return Math.max(0, y - overflow);
+}
+
 export function initialTextBox(point: Point, imageWidth: number): { x: number; y: number; width: number } {
   const available = Math.max(1, imageWidth);
   const margin = available > GALLERY_TEXT_MIN_WIDTH ? Math.min(20, available - GALLERY_TEXT_MIN_WIDTH) : 0;

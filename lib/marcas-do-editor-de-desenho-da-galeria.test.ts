@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  fitGalleryTextTop,
   galleryMarkBounds,
   initialTextBox,
   textResizeHandleHit,
@@ -24,6 +25,12 @@ test("o retângulo do texto nasce com largura e cabe na imagem", () => {
   assert.deepEqual(initialTextBox({ x: 10, y: 4 }, 400), { x: 10, y: 4, width: 280 });
   assert.deepEqual(initialTextBox({ x: 160, y: 4 }, 320), { x: 20, y: 4, width: 280 });
   assert.deepEqual(initialTextBox({ x: 90, y: 4 }, 100), { x: 0, y: 4, width: 80 });
+});
+
+test("o texto sobe quando as linhas não cabem na imagem", () => {
+  assert.equal(fitGalleryTextTop(10, 2, 200), 10);
+  assert.equal(fitGalleryTextTop(100, 3, 180), 60);
+  assert.equal(fitGalleryTextTop(0, 10, 180), 0);
 });
 
 test("a largura arrastada não fica menor que o mínimo", () => {

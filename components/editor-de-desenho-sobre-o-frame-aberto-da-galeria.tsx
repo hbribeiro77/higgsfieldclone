@@ -11,6 +11,7 @@ import {
   GALLERY_TEXT_FONT,
   GALLERY_TEXT_LINE_HEIGHT,
   GALLERY_TEXT_MIN_WIDTH,
+  fitGalleryTextTop,
   galleryMarkBounds,
   initialTextBox,
   textBoxHeight,
@@ -23,7 +24,7 @@ import {
   type Point,
 } from "@/lib/marcas-do-editor-de-desenho-da-galeria";
 
-type TextDraft = { index: number | null; x: number; y: number; width: number; value: string };
+type TextDraft = { index: number | null; x: number; y: number; anchorY: number; width: number; value: string };
 type LiveStroke = { kind: "rabisco"; points: Point[] } | { kind: "seta"; from: Point; to: Point };
 type SelectGesture =
   | { kind: "move"; index: number; origin: Point; snapshot: GalleryDrawMark[] }
@@ -70,7 +71,14 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
   const selectedIndexRef = useRef<number | null>(null);
   const toolRef = useRef<DrawTool>("rabisco");
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const widthDragRef = useRef<{ originClientX: number; startWidth: number; x: number; index: number | null; scale: number } | null>(null);
+  const widthDragRef = useRef<{
+    originClientX: number;
+    startWidth: number;
+    x: number;
+    y: number;
+    index: number | null;
+    scale: number;
+  } | null>(null);
   const [tool, setTool] = useState<DrawTool>("rabisco");
   const [color, setColor] = useState("#d6ff3f");
   const [marks, setMarks] = useState<GalleryDrawMark[]>([]);
@@ -179,7 +187,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     } else {
       all = all.map((mark, index) =>
         index === draft.index && mark.kind === "texto"
-          ? { ...mark, text: draft.value, width: draft.width, color: colorRef.current }
+          ? { ...mark, text: draft.value, width: draft.width, y: draft.y, color: colorRef.current }
           : mark,
       );
     }
@@ -197,7 +205,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
   function beginTextEdit(index: number) {
     const mark = marksRef.current[index];
     if (!mark || mark.kind !== "texto") return;
-    const draft = { index, x: mark.x, y: mark.y, width: mark.width, value: mark.text };
+    const draft = { index, x: mark.x, y: mark.y, anchorY: mark.y, width: mark.width, value: mark.text };
     textDraftRef.current = draft;
     selectedIndexRef.current = index;
     setTextDraft(draft);
@@ -267,7 +275,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
       event.preventDefault();
       commitOpenText();
       const box = initialTextBox(point, bitmapSize.width);
-      const draft = { index: null, ...box, value: "" };
+      const draft = { index: null, ...box, anchorY: box.y, value: "" };
       textDraftRef.current = draft;
       setTextDraft(draft);
       chooseSelection(null);
@@ -399,6 +407,12 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     chooseSelection(null);
   }
 
+  function textAt(index: number | null): string {
+    if (index == null) return "";
+    const mark = marksRef.current[index];
+    return mark?.kind === "texto" ? mark.text : "";
+  }
+
   function onWidthHandleDown(event: PointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
@@ -409,7 +423,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     const x = draft?.x ?? (mark?.kind === "texto" ? mark.x : null);
     if (width == null || x == null) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    widthDragRef.current = { originClientX: event.clientX, startWidth: width, x, index, scale: displayScale || 1 };
+    widthDragRef.current = { originClientX: event.clientX, startWidth: width, x, y, index, scale: displayScale || 1 };
   }
 
   function onWidthHandleMove(event: PointerEvent<HTMLDivElement>) {
@@ -419,14 +433,18 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     const maxWidth = Math.max(GALLERY_TEXT_MIN_WIDTH, bitmapSize.width - drag.x);
     const width = Math.min(textWidthFromDrag(drag.startWidth, dx), maxWidth);
     const draft = textDraftRef.current;
+    const current = draft && draft.index === drag.index ? draft.value : textAt(drag.index);
+    const y = fitGalleryTextTop(drag.y, wrapGalleryText(current, width, measureEditorLine).length, bitmapSize.height);
     if (draft && draft.index === drag.index) {
-      const next = { ...draft, width };
+      const next = { ...draft, width, y };
       textDraftRef.current = next;
       setTextDraft(next);
     }
     if (drag.index == null) return;
     replaceMarks(
-      marksRef.current.map((mark, markIndex) => (markIndex === drag.index && mark.kind === "texto" ? { ...mark, width } : mark)),
+      marksRef.current.map((mark, markIndex) =>
+        markIndex === drag.index && mark.kind === "texto" ? { ...mark, width, y } : mark,
+      ),
     );
   }
 
@@ -493,7 +511,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
                 autoFocus
                 value={textDraft.value}
                 aria-label="Texto da anotação"
-                className="absolute resize-none overflow-hidden border border-[#d6ff3f] bg-black/30 outline-none"
+                className="absolute box-content resize-none overflow-hidden border border-[#d6ff3f] bg-black/30 outline-none"
                 style={{
                   left: textDraft.x * displayScale,
                   top: textDraft.y * displayScale,
@@ -505,7 +523,13 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
                   lineHeight: `${GALLERY_TEXT_LINE_HEIGHT * displayScale}px`,
                 }}
                 onChange={(event) => {
-                  const next = { ...textDraft, value: event.target.value };
+                  const value = event.target.value;
+                  const y = fitGalleryTextTop(
+                    textDraft.anchorY,
+                    wrapGalleryText(value, textDraft.width, measureEditorLine).length,
+                    bitmapSize.height,
+                  );
+                  const next = { ...textDraft, value, y };
                   textDraftRef.current = next;
                   setTextDraft(next);
                 }}
