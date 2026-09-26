@@ -10,6 +10,7 @@ import {
   GALLERY_MARK_HIT_SLOP,
   GALLERY_TEXT_FONT,
   GALLERY_TEXT_LINE_HEIGHT,
+  GALLERY_TEXT_MIN_WIDTH,
   galleryMarkBounds,
   initialTextBox,
   textBoxHeight,
@@ -67,6 +68,9 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
   const gestureRef = useRef<SelectGesture | null>(null);
   const previewRef = useRef<GalleryDrawMark[] | null>(null);
   const selectedIndexRef = useRef<number | null>(null);
+  const toolRef = useRef<DrawTool>("rabisco");
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const widthDragRef = useRef<{ originClientX: number; startWidth: number; x: number; index: number | null; scale: number } | null>(null);
   const [tool, setTool] = useState<DrawTool>("rabisco");
   const [color, setColor] = useState("#d6ff3f");
   const [marks, setMarks] = useState<GalleryDrawMark[]>([]);
@@ -80,7 +84,8 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     textDraftRef.current = textDraft;
     colorRef.current = color;
     selectedIndexRef.current = selectedIndex;
-  }, [color, marks, selectedIndex, textDraft]);
+    toolRef.current = tool;
+  }, [color, marks, selectedIndex, textDraft, tool]);
 
   useEffect(() => {
     const element = frameRef.current;
@@ -257,7 +262,9 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
   function onPointerDown(event: PointerEvent<HTMLCanvasElement>) {
     if (saving || bitmapSize.width === 0) return;
     const point = pointerPoint(event);
-    if (tool === "texto") {
+    const activeTool = toolRef.current;
+    if (activeTool === "texto") {
+      event.preventDefault();
       commitOpenText();
       const box = initialTextBox(point, bitmapSize.width);
       const draft = { index: null, ...box, value: "" };
@@ -266,7 +273,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
       chooseSelection(null);
       return;
     }
-    if (tool === "selecionar") {
+    if (activeTool === "selecionar") {
       commitOpenText();
       event.currentTarget.setPointerCapture(event.pointerId);
       const marksNow = marksRef.current;
@@ -291,7 +298,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     }
     chooseSelection(null);
     event.currentTarget.setPointerCapture(event.pointerId);
-    liveRef.current = tool === "seta" ? { kind: "seta", from: point, to: point } : { kind: "rabisco", points: [point] };
+    liveRef.current = activeTool === "seta" ? { kind: "seta", from: point, to: point } : { kind: "rabisco", points: [point] };
     paintCurrentOverlay();
   }
 
@@ -392,6 +399,42 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     chooseSelection(null);
   }
 
+  function onWidthHandleDown(event: PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const draft = textDraftRef.current;
+    const index = draft ? draft.index : selectedIndexRef.current;
+    const mark = index == null ? null : marksRef.current[index];
+    const width = draft?.width ?? (mark?.kind === "texto" ? mark.width : null);
+    const x = draft?.x ?? (mark?.kind === "texto" ? mark.x : null);
+    if (width == null || x == null) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    widthDragRef.current = { originClientX: event.clientX, startWidth: width, x, index, scale: displayScale || 1 };
+  }
+
+  function onWidthHandleMove(event: PointerEvent<HTMLDivElement>) {
+    const drag = widthDragRef.current;
+    if (!drag || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const dx = (event.clientX - drag.originClientX) / drag.scale;
+    const maxWidth = Math.max(GALLERY_TEXT_MIN_WIDTH, bitmapSize.width - drag.x);
+    const width = Math.min(textWidthFromDrag(drag.startWidth, dx), maxWidth);
+    const draft = textDraftRef.current;
+    if (draft && draft.index === drag.index) {
+      const next = { ...draft, width };
+      textDraftRef.current = next;
+      setTextDraft(next);
+    }
+    if (drag.index == null) return;
+    replaceMarks(
+      marksRef.current.map((mark, markIndex) => (markIndex === drag.index && mark.kind === "texto" ? { ...mark, width } : mark)),
+    );
+  }
+
+  function onWidthHandleUp(event: PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    widthDragRef.current = null;
+  }
+
   function undo() {
     const all = marksRef.current.slice(0, -1);
     replaceMarks(all);
@@ -403,9 +446,32 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     }
   }
 
+  const textSession = textDraft ? `${textDraft.index ?? "novo"}:${textDraft.x}:${textDraft.y}` : "";
+
+  useEffect(() => {
+    if (!textSession) return;
+    textAreaRef.current?.focus();
+  }, [textSession]);
+
   const draftHeight = textDraft
     ? textBoxHeight(wrapGalleryText(textDraft.value, textDraft.width, measureEditorLine).length) * displayScale
     : 0;
+  const selectedMark = selectedIndex == null ? null : marks[selectedIndex];
+  const widthBox = textDraft
+    ? {
+        x: textDraft.x,
+        y: textDraft.y,
+        width: textDraft.width,
+        height: Math.max(GALLERY_TEXT_LINE_HEIGHT, draftHeight / (displayScale || 1)),
+      }
+    : selectedMark?.kind === "texto"
+      ? {
+          x: selectedMark.x,
+          y: selectedMark.y,
+          width: selectedMark.width,
+          height: textBoxHeight(wrapGalleryText(selectedMark.text, selectedMark.width, measureEditorLine).length),
+        }
+      : null;
 
   return (
     <div className="flex w-full max-w-4xl flex-col items-center gap-3">
@@ -423,6 +489,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
             />
             {textDraft ? (
               <textarea
+                ref={textAreaRef}
                 autoFocus
                 value={textDraft.value}
                 aria-label="Texto da anotação"
@@ -442,8 +509,13 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
                   textDraftRef.current = next;
                   setTextDraft(next);
                 }}
-                onBlur={() => {
-                  if (textDraftRef.current === textDraft) commitOpenText();
+                onBlur={(event) => {
+                  const nextFocus = event.relatedTarget;
+                  if (nextFocus instanceof Element && nextFocus.dataset.alcaLargura === "true") return;
+                  const current = textDraftRef.current;
+                  if (current !== textDraft) return;
+                  if (current.index == null && current.value.length === 0) return;
+                  commitOpenText();
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
@@ -452,6 +524,27 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
                     setTextDraft(null);
                   }
                 }}
+              />
+            ) : null}
+            {widthBox ? (
+              <div
+                role="slider"
+                aria-label="Largura do texto"
+                aria-orientation="horizontal"
+                aria-valuemin={GALLERY_TEXT_MIN_WIDTH}
+                aria-valuenow={Math.round(widthBox.width)}
+                data-alca-largura="true"
+                className="absolute z-20 touch-none cursor-ew-resize rounded-sm bg-[#d6ff3f]"
+                style={{
+                  left: widthBox.x * displayScale + widthBox.width * displayScale - 9,
+                  top: widthBox.y * displayScale + (widthBox.height * displayScale) / 2 - 18,
+                  width: 18,
+                  height: 36,
+                }}
+                onPointerDown={onWidthHandleDown}
+                onPointerMove={onWidthHandleMove}
+                onPointerUp={onWidthHandleUp}
+                onPointerCancel={onWidthHandleUp}
               />
             ) : null}
           </div>
@@ -464,7 +557,8 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
             type="button"
             className={`rounded-full px-4 py-2 text-sm ${tool === item.id ? "bg-[#d6ff3f] font-semibold text-black" : "bg-white/10"}`}
             onClick={() => {
-              if (tool === "texto") commitOpenText();
+              if (toolRef.current === "texto") commitOpenText();
+              toolRef.current = item.id;
               if (item.id !== "selecionar") chooseSelection(null);
               setTool(item.id);
             }}
@@ -632,9 +726,5 @@ function drawSelection(context: CanvasRenderingContext2D, mark: GalleryDrawMark)
   context.strokeStyle = "#d6ff3f";
   context.lineWidth = 2;
   context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
-  if (mark.kind === "texto") {
-    context.fillStyle = "#d6ff3f";
-    context.fillRect(bounds.x + bounds.width - 7, bounds.y + bounds.height / 2 - 7, 14, 14);
-  }
   context.restore();
 }

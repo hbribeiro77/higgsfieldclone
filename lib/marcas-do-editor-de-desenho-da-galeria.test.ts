@@ -22,7 +22,8 @@ test("o texto quebra na largura e respeita a quebra explícita", () => {
 
 test("o retângulo do texto nasce com largura e cabe na imagem", () => {
   assert.deepEqual(initialTextBox({ x: 10, y: 4 }, 400), { x: 10, y: 4, width: 280 });
-  assert.deepEqual(initialTextBox({ x: 90, y: 4 }, 100), { x: 52, y: 4, width: 48 });
+  assert.deepEqual(initialTextBox({ x: 160, y: 4 }, 320), { x: 20, y: 4, width: 280 });
+  assert.deepEqual(initialTextBox({ x: 90, y: 4 }, 100), { x: 0, y: 4, width: 80 });
 });
 
 test("a largura arrastada não fica menor que o mínimo", () => {

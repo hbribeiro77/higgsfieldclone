@@ -44,11 +44,10 @@ export function textBoxHeight(lineCount: number): number {
 
 export function initialTextBox(point: Point, imageWidth: number): { x: number; y: number; width: number } {
   const available = Math.max(1, imageWidth);
-  let width = Math.min(DEFAULT_TEXT_WIDTH, Math.max(GALLERY_TEXT_MIN_WIDTH, available - point.x));
-  width = Math.min(width, available);
-  let x = point.x;
-  if (x + width > available) x = Math.max(0, available - width);
-  return { x, y: point.y, width };
+  const margin = available > GALLERY_TEXT_MIN_WIDTH ? Math.min(20, available - GALLERY_TEXT_MIN_WIDTH) : 0;
+  const width = Math.min(DEFAULT_TEXT_WIDTH, Math.max(1, available - margin));
+  const maxX = Math.max(0, available - margin - width);
+  return { x: Math.min(point.x, maxX), y: point.y, width };
 }
 
 export function textWidthFromDrag(startWidth: number, dx: number): number {
