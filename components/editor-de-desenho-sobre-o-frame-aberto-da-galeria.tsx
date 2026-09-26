@@ -421,7 +421,8 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     const mark = index == null ? null : marksRef.current[index];
     const width = draft?.width ?? (mark?.kind === "texto" ? mark.width : null);
     const x = draft?.x ?? (mark?.kind === "texto" ? mark.x : null);
-    if (width == null || x == null) return;
+    const y = draft?.y ?? (mark?.kind === "texto" ? mark.y : null);
+    if (width == null || x == null || y == null) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     widthDragRef.current = { originClientX: event.clientX, startWidth: width, x, y, index, scale: displayScale || 1 };
   }
