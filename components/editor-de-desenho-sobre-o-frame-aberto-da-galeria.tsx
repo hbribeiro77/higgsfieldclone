@@ -51,11 +51,11 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
   const marksRef = useRef<GalleryDrawMark[]>([]);
   const textDraftRef = useRef<TextDraft | null>(null);
   const colorRef = useRef("#d6ff3f");
+  const liveRef = useRef<LiveStroke | null>(null);
   const [tool, setTool] = useState<DrawTool>("rabisco");
   const [color, setColor] = useState("#d6ff3f");
   const [marks, setMarks] = useState<GalleryDrawMark[]>([]);
   const [textDraft, setTextDraft] = useState<TextDraft | null>(null);
-  const [liveStroke, setLiveStroke] = useState<LiveStroke | null>(null);
   const [bitmapSize, setBitmapSize] = useState({ width: 0, height: 0 });
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
 
@@ -128,11 +128,8 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     const canvas = drawRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context || bitmapSize.width === 0) return;
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    drawGalleryMarks(context, marks);
-    if (liveStroke?.kind === "rabisco") drawScribble(context, liveStroke.points, color);
-    if (liveStroke?.kind === "seta") drawArrow(context, liveStroke.from, liveStroke.to, color);
-  }, [bitmapSize.width, color, display.width, liveStroke, marks]);
+    paintOverlay(context, canvas, marks, liveRef.current, color);
+  }, [bitmapSize.width, color, display.width, marks]);
 
   function commitOpenText(): GalleryDrawMark[] {
     const draft = textDraftRef.current;
@@ -188,28 +185,34 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
       return;
     }
     event.currentTarget.setPointerCapture(event.pointerId);
-    setLiveStroke(tool === "seta" ? { kind: "seta", from: point, to: point } : { kind: "rabisco", points: [point] });
+    liveRef.current = tool === "seta" ? { kind: "seta", from: point, to: point } : { kind: "rabisco", points: [point] };
+    paintCurrentOverlay();
   }
 
   function onPointerMove(event: PointerEvent<HTMLCanvasElement>) {
-    if (!liveStroke) return;
+    const live = liveRef.current;
+    if (!live) return;
     const point = pointerPoint(event);
-    setLiveStroke((current) => {
-      if (!current) return current;
-      if (current.kind === "seta") return { ...current, to: point };
-      return { ...current, points: [...current.points, point] };
-    });
+    liveRef.current =
+      live.kind === "seta" ? { ...live, to: point } : { ...live, points: [...live.points, point] };
+    paintCurrentOverlay();
   }
 
   function onPointerUp(event: PointerEvent<HTMLCanvasElement>) {
-    if (!liveStroke) return;
+    const finished = liveRef.current;
+    if (!finished) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    const finished = liveStroke;
-    setLiveStroke(null);
-    if (finished.kind === "rabisco" && pathLength(finished.points) === 0) return;
-    if (finished.kind === "seta" && Math.hypot(finished.to.x - finished.from.x, finished.to.y - finished.from.y) < 8) return;
+    liveRef.current = null;
+    if (finished.kind === "rabisco" && pathLength(finished.points) === 0) {
+      paintCurrentOverlay();
+      return;
+    }
+    if (finished.kind === "seta" && Math.hypot(finished.to.x - finished.from.x, finished.to.y - finished.from.y) < 8) {
+      paintCurrentOverlay();
+      return;
+    }
     const mark: GalleryDrawMark =
       finished.kind === "rabisco"
         ? { kind: "rabisco", color, points: finished.points }
@@ -219,6 +222,13 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
       marksRef.current = all;
       return all;
     });
+  }
+
+  function paintCurrentOverlay() {
+    const canvas = drawRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    paintOverlay(context, canvas, marksRef.current, liveRef.current, colorRef.current);
   }
 
   return (
@@ -291,7 +301,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
             type="button"
             aria-label={item.label}
             aria-pressed={color === item.value}
-            className={`h-8 w-8 rounded-full border ${color === item.value ? "border-white" : "border-white/20"}`}
+            className={`h-8 w-8 rounded-full border-2 ${color === item.value ? "border-white" : "border-white/60"}`}
             style={{ backgroundColor: item.value }}
             onClick={() => setColor(item.value)}
             disabled={saving}
@@ -332,6 +342,19 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
       </div>
     </div>
   );
+}
+
+function paintOverlay(
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  marks: GalleryDrawMark[],
+  live: LiveStroke | null,
+  color: string,
+) {
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  drawGalleryMarks(context, marks);
+  if (live?.kind === "rabisco") drawScribble(context, live.points, color);
+  if (live?.kind === "seta") drawArrow(context, live.from, live.to, color);
 }
 
 function containedSize(containerWidth: number, containerHeight: number, imageWidth: number, imageHeight: number) {
