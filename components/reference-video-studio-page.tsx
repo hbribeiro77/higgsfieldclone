@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fileToGalleryJpeg } from "@/components/conversao-de-arquivo-de-imagem-para-jpeg-da-galeria";
+import { BotaoFlutuanteDeColarImagemNoCelularETablet } from "@/components/botao-flutuante-de-colar-imagem-no-celular-e-tablet";
 import { EditorDeDesenhoSobreOFrameAbertoDaGaleria } from "@/components/editor-de-desenho-sobre-o-frame-aberto-da-galeria";
 import {
   ReferenceVideoComposer,
@@ -170,6 +171,16 @@ export function ReferenceVideoStudioPage() {
   ingestImageRef.current = (file, label) => {
     void ingestImageFile(file, label);
   };
+
+  async function pasteClipboardImage() {
+    if (savingGallery) return;
+    setFormError(null);
+    try {
+      ingestImageRef.current(await clipboardImageFile(), "Imagem colada");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "O navegador não permitiu colar a imagem.");
+    }
+  }
 
   async function copyGalleryImage(item: GalleryItemCard) {
     setFormError(null);
@@ -744,8 +755,32 @@ export function ReferenceVideoStudioPage() {
           )}
         </aside>
       </div>
+      <BotaoFlutuanteDeColarImagemNoCelularETablet
+        hidden={editingGalleryId !== null}
+        disabled={savingGallery}
+        onPaste={() => {
+          void pasteClipboardImage();
+        }}
+      />
     </div>
   );
+}
+
+async function clipboardImageFile(): Promise<File> {
+  if (!navigator.clipboard?.read) throw new Error("O navegador não permitiu colar a imagem.");
+  let items: ClipboardItem[];
+  try {
+    items = await navigator.clipboard.read();
+  } catch {
+    throw new Error("O navegador não permitiu colar a imagem.");
+  }
+  for (const item of items) {
+    const type = item.types.find((entry) => isGallerySourceImageType(entry));
+    if (!type) continue;
+    const blob = await item.getType(type);
+    return new File([blob], "imagem-colada", { type: blob.type || type });
+  }
+  throw new Error("Não há uma imagem na área de transferência.");
 }
 
 function RecorteButtons({

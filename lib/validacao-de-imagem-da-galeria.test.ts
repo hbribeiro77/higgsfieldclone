@@ -8,6 +8,7 @@ import {
   readGalleryLabel,
   scaledGalleryImageSize,
   shouldConsumeImagePaste,
+  shouldShowFloatingPasteButton,
   validateGalleryJpeg,
   validateGallerySourceGenerationId,
 } from "./validacao-de-imagem-da-galeria.ts";
@@ -95,6 +96,11 @@ test("a colagem só entra quando há imagem e o foco não é texto", () => {
   assert.equal(shouldConsumeImagePaste({ hasImageFile: true, tagName: "TEXTAREA", isContentEditable: false }), false);
   assert.equal(shouldConsumeImagePaste({ hasImageFile: true, tagName: "INPUT", isContentEditable: false }), false);
   assert.equal(shouldConsumeImagePaste({ hasImageFile: true, tagName: "DIV", isContentEditable: true }), false);
+});
+
+test("o botão flutuante de colar aparece no toque e some no mouse", () => {
+  assert.equal(shouldShowFloatingPasteButton({ coarsePointer: true }), true);
+  assert.equal(shouldShowFloatingPasteButton({ coarsePointer: false }), false);
 });
 
 test("o tipo de origem e o lado máximo seguem a spec", () => {

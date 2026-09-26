@@ -74,6 +74,10 @@ export function shouldConsumeImagePaste(input: {
   return tag !== "input" && tag !== "textarea";
 }
 
+export function shouldShowFloatingPasteButton(input: { coarsePointer: boolean }): boolean {
+  return input.coarsePointer;
+}
+
 export function scaledGalleryImageSize(width: number, height: number): { width: number; height: number } {
   const longest = Math.max(width, height);
   if (!Number.isFinite(longest) || longest <= MAX_GALLERY_IMAGE_SIDE) return { width, height };
