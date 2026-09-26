@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fileToGalleryJpeg } from "@/components/conversao-de-arquivo-de-imagem-para-jpeg-da-galeria";
+import { EditorDeDesenhoSobreOFrameAbertoDaGaleria } from "@/components/editor-de-desenho-sobre-o-frame-aberto-da-galeria";
 import {
   ReferenceVideoComposer,
   type ComposerHandle,
@@ -8,6 +10,7 @@ import {
   type ComposerSubmission,
 } from "@/components/reference-video-composer";
 import type { PublicGeneration } from "@/lib/generation-ownership-file-store";
+import { annotationLabel, isGallerySourceImageType, shouldConsumeImagePaste } from "@/lib/validacao-de-imagem-da-galeria";
 
 type GalleryItemCard = {
   id: string;
@@ -15,6 +18,7 @@ type GalleryItemCard = {
   label: string;
   mediaUrl: string;
   createdAt: string;
+  sourceGenerationId: string;
 };
 
 const STATUS_LABEL: Record<PublicGeneration["status"], string> = {
@@ -43,9 +47,12 @@ export function ReferenceVideoStudioPage() {
   const [clipStart, setClipStart] = useState<number | null>(null);
   const [clipEnd, setClipEnd] = useState<number | null>(null);
   const [savingGallery, setSavingGallery] = useState(false);
+  const [editingGalleryId, setEditingGalleryId] = useState<string | null>(null);
   const suggestionToken = useRef(0);
   const composerRef = useRef<ComposerHandle>(null);
   const playerRef = useRef<HTMLVideoElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const ingestImageRef = useRef<(file: File, label: string) => void>(() => undefined);
 
   const selected = generations.find((generation) => generation.id === selectedId) ?? null;
 
@@ -79,6 +86,29 @@ export function ReferenceVideoStudioPage() {
   }, []);
 
   useEffect(() => {
+    function onPaste(event: ClipboardEvent) {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const imageItem = Array.from(event.clipboardData?.items ?? []).find((item) => isGallerySourceImageType(item.type));
+      if (
+        !shouldConsumeImagePaste({
+          hasImageFile: Boolean(imageItem),
+          tagName: target?.tagName ?? "",
+          isContentEditable: Boolean(target?.isContentEditable),
+        }) ||
+        !imageItem
+      ) {
+        return;
+      }
+      const file = imageItem.getAsFile();
+      if (!file) return;
+      event.preventDefault();
+      ingestImageRef.current(file, "Imagem colada");
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
+
+  useEffect(() => {
     if (!selected?.polling) return;
     const timer = window.setInterval(() => {
       void fetch(`/api/generations/${selected.id}`)
@@ -108,6 +138,73 @@ export function ReferenceVideoStudioPage() {
   function clearClipMarks() {
     setClipStart(null);
     setClipEnd(null);
+  }
+
+  async function persistGalleryJpeg(jpeg: Blob, label: string, sourceGenerationId: string) {
+    const body = new FormData();
+    body.set("file", new File([jpeg], "imagem.jpg", { type: "image/jpeg" }));
+    body.set("label", label);
+    if (sourceGenerationId) body.set("sourceGenerationId", sourceGenerationId);
+    const response = await fetch("/api/galeria/imagem", { method: "POST", body });
+    const payload = (await response.json()) as { error?: string; item?: GalleryItemCard };
+    if (!response.ok || !payload.item) throw new Error(payload.error ?? "Não foi possível salvar a imagem.");
+    await refreshGallery();
+    setViewedGalleryId(payload.item.id);
+    setGalleryTab("images");
+    setEditingGalleryId(null);
+  }
+
+  async function ingestImageFile(file: File, label: string) {
+    if (savingGallery) return;
+    setSavingGallery(true);
+    setFormError(null);
+    try {
+      await persistGalleryJpeg(await fileToGalleryJpeg(file), label, "");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Não foi possível salvar a imagem.");
+    } finally {
+      setSavingGallery(false);
+    }
+  }
+
+  ingestImageRef.current = (file, label) => {
+    void ingestImageFile(file, label);
+  };
+
+  async function copyGalleryImage(item: GalleryItemCard) {
+    setFormError(null);
+    try {
+      if (!navigator.clipboard?.write) throw new Error("O navegador não permitiu copiar a imagem.");
+      const response = await fetch(item.mediaUrl);
+      if (!response.ok) throw new Error("O navegador não permitiu copiar a imagem.");
+      const bitmap = await createImageBitmap(await response.blob());
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("O navegador não permitiu copiar a imagem.");
+      context.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const png = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("O navegador não permitiu copiar a imagem."))), "image/png");
+      });
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    } catch {
+      setFormError("O navegador não permitiu copiar a imagem.");
+    }
+  }
+
+  async function saveAnnotation(jpeg: Blob, item: GalleryItemCard) {
+    setSavingGallery(true);
+    setFormError(null);
+    try {
+      await persistGalleryJpeg(jpeg, annotationLabel(item.label), item.sourceGenerationId ?? "");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Não foi possível salvar a imagem.");
+      throw error;
+    } finally {
+      setSavingGallery(false);
+    }
   }
 
   async function saveFrame() {
@@ -292,7 +389,10 @@ export function ReferenceVideoStudioPage() {
       setFormError(payload.error ?? "Não foi possível apagar.");
       return;
     }
-    if (viewedGalleryId === item.id) setViewedGalleryId(null);
+    if (viewedGalleryId === item.id) {
+      setViewedGalleryId(null);
+      setEditingGalleryId(null);
+    }
     await refreshGallery();
   }
 
@@ -313,11 +413,13 @@ export function ReferenceVideoStudioPage() {
   function openGeneration(id: string) {
     clearClipMarks();
     setViewedGalleryId(null);
+    setEditingGalleryId(null);
     setSelectedId(id);
   }
 
   function openGalleryItem(id: string) {
     clearClipMarks();
+    setEditingGalleryId(null);
     setViewedGalleryId(id);
   }
 
@@ -357,7 +459,17 @@ export function ReferenceVideoStudioPage() {
             </p>
           </div>
           <section className="flex flex-1 items-center justify-center px-6 pb-8" aria-live="polite">
-            {viewedGallery?.kind === "image" ? (
+            {viewedGallery?.kind === "image" && editingGalleryId === viewedGallery.id ? (
+              <EditorDeDesenhoSobreOFrameAbertoDaGaleria
+                imageUrl={viewedGallery.mediaUrl}
+                saving={savingGallery}
+                onCancel={() => setEditingGalleryId(null)}
+                onError={setFormError}
+                onSave={async (jpeg) => {
+                  await saveAnnotation(jpeg, viewedGallery);
+                }}
+              />
+            ) : viewedGallery?.kind === "image" ? (
               <div className="flex w-full max-w-4xl flex-col items-center gap-3">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -375,6 +487,25 @@ export function ReferenceVideoStudioPage() {
                     }}
                   >
                     {preparingReferenceId === viewedGallery.id ? "Preparando referência…" : "Usar como referência"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full bg-white/10 px-4 py-2 text-sm"
+                    onClick={() => {
+                      void copyGalleryImage(viewedGallery);
+                    }}
+                  >
+                    Copiar
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full bg-white/10 px-4 py-2 text-sm"
+                    onClick={() => {
+                      setFormError(null);
+                      setEditingGalleryId(viewedGallery.id);
+                    }}
+                  >
+                    Editar
                   </button>
                   <button
                     type="button"
@@ -572,19 +703,44 @@ export function ReferenceVideoStudioPage() {
               </div>
             )
           ) : (
-            <GalleryCards
-              items={gallery.filter((item) => item.kind === (galleryTab === "clips" ? "video" : "image"))}
-              empty={
-                galleryTab === "clips"
-                  ? "Nenhum clipe. No vídeo gerado, marque Início e Fim e clique em Salvar clipe."
-                  : "Nenhum frame. No vídeo gerado, clique em Salvar frame."
-              }
-              selectedId={viewedGalleryId}
-              onOpen={(item) => openGalleryItem(item.id)}
-              onDelete={(item) => {
-                void removeGalleryItem(item);
-              }}
-            />
+            <div>
+              {galleryTab === "images" ? (
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    className="rounded-full bg-white/10 px-3 py-2 text-xs disabled:opacity-40"
+                    disabled={savingGallery}
+                    onClick={() => imageInputRef.current?.click()}
+                  >
+                    Enviar imagem
+                  </button>
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif"
+                    className="sr-only"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (file) ingestImageRef.current(file, "Imagem enviada");
+                    }}
+                  />
+                </div>
+              ) : null}
+              <GalleryCards
+                items={gallery.filter((item) => item.kind === (galleryTab === "clips" ? "video" : "image"))}
+                empty={
+                  galleryTab === "clips"
+                    ? "Nenhum clipe. No vídeo gerado, marque Início e Fim e clique em Salvar clipe."
+                    : "Nenhum frame. No vídeo gerado, clique em Salvar frame."
+                }
+                selectedId={viewedGalleryId}
+                onOpen={(item) => openGalleryItem(item.id)}
+                onDelete={(item) => {
+                  void removeGalleryItem(item);
+                }}
+              />
+            </div>
           )}
         </aside>
       </div>
