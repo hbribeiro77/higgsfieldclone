@@ -6,16 +6,27 @@ import {
   GALLERY_UNREADABLE_IMAGE_ERROR,
   loadScaledGalleryBitmap,
 } from "@/components/conversao-de-arquivo-de-imagem-para-jpeg-da-galeria";
+import {
+  GALLERY_MARK_HIT_SLOP,
+  GALLERY_TEXT_FONT,
+  GALLERY_TEXT_LINE_HEIGHT,
+  galleryMarkBounds,
+  initialTextBox,
+  textBoxHeight,
+  textResizeHandleHit,
+  textWidthFromDrag,
+  topGalleryMarkIndex,
+  translateGalleryMark,
+  wrapGalleryText,
+  type GalleryDrawMark,
+  type Point,
+} from "@/lib/marcas-do-editor-de-desenho-da-galeria";
 
-type Point = { x: number; y: number };
-
-type GalleryDrawMark =
-  | { kind: "rabisco"; color: string; points: Point[] }
-  | { kind: "seta"; color: string; from: Point; to: Point }
-  | { kind: "texto"; color: string; x: number; y: number; text: string };
-
-type TextDraft = { x: number; y: number; value: string };
+type TextDraft = { index: number | null; x: number; y: number; width: number; value: string };
 type LiveStroke = { kind: "rabisco"; points: Point[] } | { kind: "seta"; from: Point; to: Point };
+type SelectGesture =
+  | { kind: "move"; index: number; origin: Point; snapshot: GalleryDrawMark[] }
+  | { kind: "resize"; index: number; originX: number; startWidth: number; snapshot: GalleryDrawMark[] };
 
 const COLORS = [
   { value: "#ffffff", label: "Branco" },
@@ -24,6 +35,7 @@ const COLORS = [
 ] as const;
 
 const TOOLS = [
+  { id: "selecionar", label: "Selecionar" },
   { id: "rabisco", label: "Rabisco" },
   { id: "seta", label: "Seta" },
   { id: "texto", label: "Texto" },
@@ -52,10 +64,14 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
   const textDraftRef = useRef<TextDraft | null>(null);
   const colorRef = useRef("#d6ff3f");
   const liveRef = useRef<LiveStroke | null>(null);
+  const gestureRef = useRef<SelectGesture | null>(null);
+  const previewRef = useRef<GalleryDrawMark[] | null>(null);
+  const selectedIndexRef = useRef<number | null>(null);
   const [tool, setTool] = useState<DrawTool>("rabisco");
   const [color, setColor] = useState("#d6ff3f");
   const [marks, setMarks] = useState<GalleryDrawMark[]>([]);
   const [textDraft, setTextDraft] = useState<TextDraft | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [bitmapSize, setBitmapSize] = useState({ width: 0, height: 0 });
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
 
@@ -63,7 +79,8 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     marksRef.current = marks;
     textDraftRef.current = textDraft;
     colorRef.current = color;
-  }, [color, marks, textDraft]);
+    selectedIndexRef.current = selectedIndex;
+  }, [color, marks, selectedIndex, textDraft]);
 
   useEffect(() => {
     const element = frameRef.current;
@@ -104,7 +121,8 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
 
   const display = containedSize(frameSize.width, frameSize.height, bitmapSize.width, bitmapSize.height);
   const displayScale = bitmapSize.width > 0 ? display.width / bitmapSize.width : 1;
-  const canSave = marks.length > 0 && !saving && bitmapSize.width > 0;
+  const canSave =
+    (marks.length > 0 || (textDraft?.value.trim().length ?? 0) > 0) && !saving && bitmapSize.width > 0;
 
   useEffect(() => {
     const bitmap = bitmapRef.current;
@@ -128,20 +146,67 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     const canvas = drawRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context || bitmapSize.width === 0) return;
-    paintOverlay(context, canvas, marks, liveRef.current, color);
-  }, [bitmapSize.width, color, display.width, marks]);
+    paintOverlay(context, canvas, marks, liveRef.current, color, selectedIndex, textDraft?.index ?? null);
+  }, [bitmapSize.width, color, display.width, marks, selectedIndex, textDraft]);
+
+  function measureLine(line: string): number {
+    const context = drawRef.current?.getContext("2d");
+    if (!context) return line.length * 16;
+    context.font = GALLERY_TEXT_FONT;
+    return context.measureText(line).width;
+  }
+
+  function hitSlop(): number {
+    return Math.max(GALLERY_MARK_HIT_SLOP, displayScale > 0 ? 22 / displayScale : GALLERY_MARK_HIT_SLOP);
+  }
 
   function commitOpenText(): GalleryDrawMark[] {
     const draft = textDraftRef.current;
-    const text = draft?.value.trim() ?? "";
-    const extra: GalleryDrawMark[] =
-      draft && text ? [{ kind: "texto", color: colorRef.current, x: draft.x, y: draft.y, text }] : [];
-    const all = extra.length > 0 ? [...marksRef.current, ...extra] : marksRef.current;
+    if (!draft) return marksRef.current;
+    const blank = draft.value.trim().length === 0;
+    let all = marksRef.current;
+    if (draft.index == null) {
+      if (!blank) {
+        all = [...all, { kind: "texto", color: colorRef.current, x: draft.x, y: draft.y, width: draft.width, text: draft.value }];
+      }
+    } else if (blank) {
+      all = all.filter((_, index) => index !== draft.index);
+    } else {
+      all = all.map((mark, index) =>
+        index === draft.index && mark.kind === "texto"
+          ? { ...mark, text: draft.value, width: draft.width, color: colorRef.current }
+          : mark,
+      );
+    }
     textDraftRef.current = null;
     marksRef.current = all;
     setTextDraft(null);
-    if (extra.length > 0) setMarks(all);
+    setMarks(all);
+    if (draft.index != null && blank) {
+      selectedIndexRef.current = null;
+      setSelectedIndex(null);
+    }
     return all;
+  }
+
+  function beginTextEdit(index: number) {
+    const mark = marksRef.current[index];
+    if (!mark || mark.kind !== "texto") return;
+    const draft = { index, x: mark.x, y: mark.y, width: mark.width, value: mark.text };
+    textDraftRef.current = draft;
+    selectedIndexRef.current = index;
+    setTextDraft(draft);
+    setSelectedIndex(index);
+  }
+
+  function replaceMarks(next: GalleryDrawMark[]) {
+    marksRef.current = next;
+    setMarks(next);
+  }
+
+  function chooseSelection(index: number | null) {
+    selectedIndexRef.current = index;
+    setSelectedIndex(index);
   }
 
   async function save() {
@@ -158,7 +223,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
       return;
     }
     context.drawImage(bitmap, 0, 0);
-    drawGalleryMarks(context, all);
+    drawGalleryMarks(context, all, null);
     try {
       await onSave(await encodeCanvasAsGalleryJpeg(canvas));
     } catch (error) {
@@ -174,36 +239,118 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     };
   }
 
+  function paintCurrentOverlay() {
+    const canvas = drawRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    paintOverlay(
+      context,
+      canvas,
+      previewRef.current ?? marksRef.current,
+      liveRef.current,
+      colorRef.current,
+      gestureRef.current?.index ?? selectedIndexRef.current,
+      textDraftRef.current?.index ?? null,
+    );
+  }
+
   function onPointerDown(event: PointerEvent<HTMLCanvasElement>) {
     if (saving || bitmapSize.width === 0) return;
     const point = pointerPoint(event);
     if (tool === "texto") {
       commitOpenText();
-      const draft = { x: point.x, y: point.y, value: "" };
+      const box = initialTextBox(point, bitmapSize.width);
+      const draft = { index: null, ...box, value: "" };
       textDraftRef.current = draft;
       setTextDraft(draft);
+      chooseSelection(null);
       return;
     }
+    if (tool === "selecionar") {
+      commitOpenText();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const marksNow = marksRef.current;
+      const slop = hitSlop();
+      const resizeIndex = marksNow.findLastIndex(
+        (mark) => mark.kind === "texto" && textResizeHandleHit(mark, point, measureLine, slop),
+      );
+      if (resizeIndex >= 0) {
+        const mark = marksNow[resizeIndex];
+        if (mark.kind !== "texto") return;
+        gestureRef.current = { kind: "resize", index: resizeIndex, originX: point.x, startWidth: mark.width, snapshot: marksNow };
+        chooseSelection(resizeIndex);
+        return;
+      }
+      const index = topGalleryMarkIndex(marksNow, point, measureLine, slop);
+      if (index == null) {
+        chooseSelection(null);
+        return;
+      }
+      gestureRef.current = { kind: "move", index, origin: point, snapshot: marksNow };
+      return;
+    }
+    chooseSelection(null);
     event.currentTarget.setPointerCapture(event.pointerId);
     liveRef.current = tool === "seta" ? { kind: "seta", from: point, to: point } : { kind: "rabisco", points: [point] };
     paintCurrentOverlay();
   }
 
   function onPointerMove(event: PointerEvent<HTMLCanvasElement>) {
+    const point = pointerPoint(event);
+    const gesture = gestureRef.current;
+    if (gesture?.kind === "resize") {
+      previewRef.current = gesture.snapshot.map((mark, index) =>
+        index === gesture.index && mark.kind === "texto"
+          ? { ...mark, width: textWidthFromDrag(gesture.startWidth, point.x - gesture.originX) }
+          : mark,
+      );
+      paintCurrentOverlay();
+      return;
+    }
+    if (gesture?.kind === "move") {
+      previewRef.current = gesture.snapshot.map((mark, index) =>
+        index === gesture.index
+          ? translateGalleryMark(mark, point.x - gesture.origin.x, point.y - gesture.origin.y)
+          : mark,
+      );
+      paintCurrentOverlay();
+      return;
+    }
     const live = liveRef.current;
     if (!live) return;
-    const point = pointerPoint(event);
-    liveRef.current =
-      live.kind === "seta" ? { ...live, to: point } : { ...live, points: [...live.points, point] };
+    liveRef.current = live.kind === "seta" ? { ...live, to: point } : { ...live, points: [...live.points, point] };
     paintCurrentOverlay();
   }
 
   function onPointerUp(event: PointerEvent<HTMLCanvasElement>) {
-    const finished = liveRef.current;
-    if (!finished) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    const gesture = gestureRef.current;
+    if (gesture) {
+      const point = pointerPoint(event);
+      const next = previewRef.current ?? gesture.snapshot;
+      gestureRef.current = null;
+      previewRef.current = null;
+      if (gesture.kind === "resize") {
+        replaceMarks(next);
+        paintCurrentOverlay();
+        return;
+      }
+      const distance = Math.hypot(point.x - gesture.origin.x, point.y - gesture.origin.y);
+      if (distance < 8) {
+        replaceMarks(gesture.snapshot);
+        const mark = gesture.snapshot[gesture.index];
+        if (mark?.kind === "texto" && selectedIndexRef.current === gesture.index) beginTextEdit(gesture.index);
+        else chooseSelection(gesture.index);
+        return;
+      }
+      replaceMarks(next);
+      chooseSelection(gesture.index);
+      return;
+    }
+    const finished = liveRef.current;
+    if (!finished) return;
     liveRef.current = null;
     if (finished.kind === "rabisco" && pathLength(finished.points) === 0) {
       paintCurrentOverlay();
@@ -215,21 +362,50 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
     }
     const mark: GalleryDrawMark =
       finished.kind === "rabisco"
-        ? { kind: "rabisco", color, points: finished.points }
-        : { kind: "seta", color, from: finished.from, to: finished.to };
-    setMarks((current) => {
-      const all = [...current, mark];
-      marksRef.current = all;
-      return all;
-    });
+        ? { kind: "rabisco", color: colorRef.current, points: finished.points }
+        : { kind: "seta", color: colorRef.current, from: finished.from, to: finished.to };
+    replaceMarks([...marksRef.current, mark]);
   }
 
-  function paintCurrentOverlay() {
-    const canvas = drawRef.current;
-    const context = canvas?.getContext("2d");
-    if (!canvas || !context) return;
-    paintOverlay(context, canvas, marksRef.current, liveRef.current, colorRef.current);
+  function applyColor(next: string) {
+    colorRef.current = next;
+    setColor(next);
+    const index = selectedIndexRef.current;
+    if (index == null) return;
+    replaceMarks(marksRef.current.map((mark, markIndex) => (markIndex === index ? { ...mark, color: next } : mark)));
   }
+
+  function deleteSelected() {
+    const draft = textDraftRef.current;
+    if (draft && draft.index == null) {
+      textDraftRef.current = null;
+      setTextDraft(null);
+      return;
+    }
+    const index = selectedIndexRef.current;
+    if (index == null) return;
+    if (draft?.index === index) {
+      textDraftRef.current = null;
+      setTextDraft(null);
+    }
+    replaceMarks(marksRef.current.filter((_, markIndex) => markIndex !== index));
+    chooseSelection(null);
+  }
+
+  function undo() {
+    const all = marksRef.current.slice(0, -1);
+    replaceMarks(all);
+    if (selectedIndexRef.current != null && selectedIndexRef.current >= all.length) chooseSelection(null);
+    const draft = textDraftRef.current;
+    if (draft?.index != null && draft.index >= all.length) {
+      textDraftRef.current = null;
+      setTextDraft(null);
+    }
+  }
+
+  const draftHeight = textDraft
+    ? textBoxHeight(wrapGalleryText(textDraft.value, textDraft.width, measureEditorLine).length) * displayScale
+    : 0;
 
   return (
     <div className="flex w-full max-w-4xl flex-col items-center gap-3">
@@ -246,18 +422,20 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
               onPointerCancel={onPointerUp}
             />
             {textDraft ? (
-              <input
+              <textarea
                 autoFocus
                 value={textDraft.value}
                 aria-label="Texto da anotação"
-                className="absolute bg-transparent outline-none"
+                className="absolute resize-none overflow-hidden border border-[#d6ff3f] bg-black/30 outline-none"
                 style={{
                   left: textDraft.x * displayScale,
                   top: textDraft.y * displayScale,
+                  width: Math.max(1, textDraft.width * displayScale),
+                  height: Math.max(GALLERY_TEXT_LINE_HEIGHT * displayScale, draftHeight),
                   color,
                   fontSize: 32 * displayScale,
                   fontFamily: "sans-serif",
-                  lineHeight: 1,
+                  lineHeight: `${GALLERY_TEXT_LINE_HEIGHT * displayScale}px`,
                 }}
                 onChange={(event) => {
                   const next = { ...textDraft, value: event.target.value };
@@ -268,10 +446,6 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
                   if (textDraftRef.current === textDraft) commitOpenText();
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    commitOpenText();
-                  }
                   if (event.key === "Escape") {
                     event.preventDefault();
                     textDraftRef.current = null;
@@ -289,7 +463,11 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
             key={item.id}
             type="button"
             className={`rounded-full px-4 py-2 text-sm ${tool === item.id ? "bg-[#d6ff3f] font-semibold text-black" : "bg-white/10"}`}
-            onClick={() => setTool(item.id)}
+            onClick={() => {
+              if (tool === "texto") commitOpenText();
+              if (item.id !== "selecionar") chooseSelection(null);
+              setTool(item.id);
+            }}
             disabled={saving}
           >
             {item.label}
@@ -302,22 +480,24 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
             aria-label={item.label}
             aria-pressed={color === item.value}
             className={`h-8 w-8 rounded-full border-2 ${color === item.value ? "border-white" : "border-white/60"}`}
-            style={{ backgroundColor: item.value }}
-            onClick={() => setColor(item.value)}
+            onClick={() => applyColor(item.value)}
             disabled={saving}
+            style={{ backgroundColor: item.value }}
           />
         ))}
         <button
           type="button"
           className="rounded-full bg-white/10 px-4 py-2 text-sm disabled:opacity-40"
+          disabled={saving || (selectedIndex == null && textDraft == null)}
+          onClick={deleteSelected}
+        >
+          Apagar
+        </button>
+        <button
+          type="button"
+          className="rounded-full bg-white/10 px-4 py-2 text-sm disabled:opacity-40"
           disabled={saving || marks.length === 0}
-          onClick={() => {
-            setMarks((current) => {
-              const all = current.slice(0, -1);
-              marksRef.current = all;
-              return all;
-            });
-          }}
+          onClick={undo}
         >
           Desfazer
         </button>
@@ -344,17 +524,32 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
   );
 }
 
+let editorMeasureCanvas: HTMLCanvasElement | null = null;
+
+function measureEditorLine(line: string): number {
+  if (typeof document === "undefined") return line.length * 16;
+  editorMeasureCanvas ??= document.createElement("canvas");
+  const context = editorMeasureCanvas.getContext("2d");
+  if (!context) return line.length * 16;
+  context.font = GALLERY_TEXT_FONT;
+  return context.measureText(line).width;
+}
+
 function paintOverlay(
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   marks: GalleryDrawMark[],
   live: LiveStroke | null,
   color: string,
+  selectedIndex: number | null,
+  hiddenTextIndex: number | null,
 ) {
   context.clearRect(0, 0, canvas.width, canvas.height);
-  drawGalleryMarks(context, marks);
+  drawGalleryMarks(context, marks, hiddenTextIndex);
   if (live?.kind === "rabisco") drawScribble(context, live.points, color);
   if (live?.kind === "seta") drawArrow(context, live.from, live.to, color);
+  const selected = selectedIndex == null ? null : marks[selectedIndex];
+  if (selected) drawSelection(context, selected);
 }
 
 function containedSize(containerWidth: number, containerHeight: number, imageWidth: number, imageHeight: number) {
@@ -376,12 +571,12 @@ function pathLength(points: Point[]): number {
   return length;
 }
 
-function drawGalleryMarks(context: CanvasRenderingContext2D, marks: GalleryDrawMark[]) {
-  for (const mark of marks) {
+function drawGalleryMarks(context: CanvasRenderingContext2D, marks: GalleryDrawMark[], hiddenTextIndex: number | null) {
+  marks.forEach((mark, index) => {
     if (mark.kind === "rabisco") drawScribble(context, mark.points, mark.color);
     if (mark.kind === "seta") drawArrow(context, mark.from, mark.to, mark.color);
-    if (mark.kind === "texto") drawText(context, mark);
-  }
+    if (mark.kind === "texto" && index !== hiddenTextIndex) drawText(context, mark);
+  });
 }
 
 function drawScribble(context: CanvasRenderingContext2D, points: Point[], color: string) {
@@ -416,8 +611,30 @@ function drawArrow(context: CanvasRenderingContext2D, from: Point, to: Point, co
 }
 
 function drawText(context: CanvasRenderingContext2D, mark: Extract<GalleryDrawMark, { kind: "texto" }>) {
+  context.font = GALLERY_TEXT_FONT;
   context.fillStyle = mark.color;
-  context.font = "32px sans-serif";
   context.textBaseline = "top";
-  context.fillText(mark.text, mark.x, mark.y);
+  const lines = wrapGalleryText(mark.text, mark.width, (line) => {
+    context.font = GALLERY_TEXT_FONT;
+    return context.measureText(line).width;
+  });
+  lines.forEach((line, index) => {
+    context.fillText(line, mark.x, mark.y + index * GALLERY_TEXT_LINE_HEIGHT);
+  });
+}
+
+function drawSelection(context: CanvasRenderingContext2D, mark: GalleryDrawMark) {
+  const bounds = galleryMarkBounds(mark, (line) => {
+    context.font = GALLERY_TEXT_FONT;
+    return context.measureText(line).width;
+  });
+  context.save();
+  context.strokeStyle = "#d6ff3f";
+  context.lineWidth = 2;
+  context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+  if (mark.kind === "texto") {
+    context.fillStyle = "#d6ff3f";
+    context.fillRect(bounds.x + bounds.width - 7, bounds.y + bounds.height / 2 - 7, 14, 14);
+  }
+  context.restore();
 }
