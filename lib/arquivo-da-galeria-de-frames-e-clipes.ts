@@ -2,6 +2,12 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  buildGalleryImageItem,
+  readGalleryLabel,
+  validateGalleryJpeg,
+  validateGallerySourceGenerationId,
+} from "@/lib/validacao-de-imagem-da-galeria";
 import { validateClipRange, validateFrameTime } from "@/lib/validacao-de-recorte-de-frame-e-clipe";
 
 export type GalleryKind = "image" | "video";
@@ -92,6 +98,30 @@ export async function saveFrameFromVideo(input: {
     "2",
     galleryItemPath(item),
   ]);
+  await remember(item);
+  return item;
+}
+
+export async function saveGalleryImage(input: {
+  bytes: Buffer;
+  label: string;
+  sourceGenerationId: string;
+}): Promise<GalleryItem> {
+  const jpegError = validateGalleryJpeg(input.bytes);
+  if (jpegError) throw new Error(jpegError);
+  const labelResult = readGalleryLabel(input.label);
+  if ("error" in labelResult) throw new Error(labelResult.error);
+  const originError = validateGallerySourceGenerationId(input.sourceGenerationId);
+  if (originError) throw new Error(originError);
+  const item = buildGalleryImageItem({
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+    label: labelResult.label,
+    sourceGenerationId: input.sourceGenerationId,
+  });
+  const destination = galleryItemPath(item);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await writeFile(destination, input.bytes);
   await remember(item);
   return item;
 }
