@@ -536,7 +536,7 @@ export function EditorDeDesenhoSobreOFrameAbertoDaGaleria({
                 }}
                 onBlur={(event) => {
                   const nextFocus = event.relatedTarget;
-                  if (nextFocus instanceof Element && nextFocus.dataset.alcaLargura === "true") return;
+                  if (nextFocus instanceof HTMLElement && nextFocus.dataset.alcaLargura === "true") return;
                   const current = textDraftRef.current;
                   if (current !== textDraft) return;
                   if (current.index == null && current.value.length === 0) return;
